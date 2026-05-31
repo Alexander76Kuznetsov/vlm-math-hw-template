@@ -2,7 +2,7 @@ seed: 42
 track: B_small_gpu
 
 data:
-  train_manifest: assets/toy_math_vqa/manifest.jsonl
+  train_manifest: assets/math_vqa_medium/manifest.jsonl
   split: train
   max_samples: null
 
@@ -32,5 +32,5 @@ trainer:
   learning_rate: 0.0003
   weight_decay: 0.01
   gradient_checkpointing: false
-  num_workers: 2
+  num_workers: 0
   save_checkpoint_path: artifacts/adapter.safetensors
