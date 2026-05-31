@@ -15,14 +15,25 @@ from hw.model import MathVLM, ModelConfig
 from hw.processor import MathVLMProcessor, ProcessorConfig
 
 
-def normalize_text(text: str) -> str:
-    """Simple normalization for free-form answers."""
-    text = text.strip().lower()
-    text = re.sub(r"\s+", " ", text)
-    return text
+def normalize_text(s: str) -> str:
+    return str(s).strip().lower().replace(",", ".")
 
 
-def parse_mc_answer(text: str, choices: tuple[str, ...] = CHOICES) -> str | None:
+def latin_letter(ch: str) -> str:
+    mapping = {
+        "А": "A",
+        "В": "B",
+        "С": "C",
+        "Д": "D",
+        "а": "A",
+        "в": "B",
+        "с": "C",
+        "д": "D",
+    }
+    return mapping.get(ch, ch.upper())
+
+
+def parse_mc_answer(text: str, options=None) -> str | None:
     """Extract multiple-choice answer letter from model output.
 
     TODO:
@@ -32,19 +43,43 @@ def parse_mc_answer(text: str, choices: tuple[str, ...] = CHOICES) -> str | None
             "Answer: C"
             "The correct answer is D."
     """
-    text = text.strip().upper()
-    choice_re = "".join(re.escape(c) for c in choices)
-    patterns = [
-        rf"^\s*\(?([{choice_re}])\)?\s*[\).:]?\s*$",
-        rf"(?:ANSWER|ОТВЕТ|CORRECT ANSWER|ПРАВИЛЬНЫЙ ОТВЕТ)\s*[:\-]?\s*\(?([{choice_re}])\)?",
-        rf"\b([{choice_re}])\s*[\).:]",
-        rf"\(([{choice_re}])\)",
-        rf"\b([{choice_re}])\b",
-    ]
-    for pattern in patterns:
-        m = re.search(pattern, text, flags=re.IGNORECASE)
-        if m:
-            return m.group(1).upper()
+    text = str(text).strip()
+
+    # 1. Явное "Ответ: B" / "Answer: C"
+    m = re.search(r"(?:ответ|answer)\s*[:\-]?\s*([ABCDАВСД])\b", text, re.IGNORECASE)
+    if m:
+        return latin_letter(m.group(1))
+
+    # 2. Формат "B) ..." где угодно
+    m = re.search(r"\b([ABCDАВСД])\s*[\)\.:\-]", text, re.IGNORECASE)
+    if m:
+        return latin_letter(m.group(1))
+
+    # 3. Просто одиночная буква
+    m = re.search(r"\b([ABCDАВСД])\b", text, re.IGNORECASE)
+    if m:
+        return latin_letter(m.group(1))
+
+    # 4. Если модель вывела значение, например "12" или "135°",
+    # пробуем сопоставить с текстом вариантов.
+    if options:
+        out_norm = normalize_text(text)
+        for i, opt in enumerate(options):
+            letter = "ABCD"[i]
+            opt_norm = normalize_text(opt)
+
+            # убираем "A)", "B.", etc.
+            opt_value = re.sub(r"^[abcdавсд]\s*[\)\.:\-]\s*", "", opt_norm).strip()
+
+            if opt_value and opt_value in out_norm:
+                return letter
+
+            # числовое сравнение
+            nums_out = re.findall(r"-?\d+(?:\.\d+)?", out_norm)
+            nums_opt = re.findall(r"-?\d+(?:\.\d+)?", opt_value)
+            if nums_out and nums_opt and nums_out[0] == nums_opt[0]:
+                return letter
+
     return None
 
 
@@ -155,7 +190,7 @@ def run_benchmark(config: dict[str, Any], toy: bool = False) -> dict[str, float]
             eos_token_id=tokenizer.eos_token_id,
         )
         text = tokenizer.decode(gen[0], skip_special_tokens=True)
-        pred = parse_mc_answer(text) or normalize_text(text)
+        pred = parse_mc_answer(text, sample.options) or normalize_text(text)
         rows.append({"id": sample.id, "prediction": pred, "answer": sample.answer, "subject": sample.subject, "output": text})
 
     output_path = inf_cfg.get("output_path")
